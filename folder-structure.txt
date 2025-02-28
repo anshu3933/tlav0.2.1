@@ -1,0 +1,10 @@
+ui/
+├── app.py                 # Main application file
+├── components/            # UI components
+│   ├── __init__.py        # Makes the directory a package
+│   ├── common.py          # Common UI elements
+│   ├── sidebar.py         # Sidebar with document upload
+│   ├── chat.py            # Chat interface
+│   ├── iep.py             # IEP generation interface
+│   └── lesson_plan.py     # Lesson plan interface
+└── state_manager.py       # State management (already exists)

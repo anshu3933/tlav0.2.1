@@ -1,0 +1,393 @@
+# tests/test_document_processing.py
+
+import os
+import unittest
+import tempfile
+import shutil
+from unittest.mock import patch, MagicMock
+from io import BytesIO
+
+# Add parent directory to path
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Import modules to test
+from core.document_processing.document_validator import DocumentValidator
+from core.document_processing.document_loader import DocumentLoader, LoaderResult
+from core.document_processing.file_handler import FileHandler, FileHandlerError
+
+class MockPdfReader:
+    """Mock for PdfReader."""
+    
+    def __init__(self, file_path):
+        self.file_path = file_path
+        self.pages = [MockPage(), MockPage()]
+
+class MockPage:
+    """Mock for PDF page."""
+    
+    def extract_text(self):
+        return "This is mock PDF text."
+
+class MockDocxDocument:
+    """Mock for DocxDocument."""
+    
+    def __init__(self, file_path):
+        self.file_path = file_path
+        self.paragraphs = [MockParagraph(), MockParagraph()]
+
+class MockParagraph:
+    """Mock for DOCX paragraph."""
+    
+    @property
+    def text(self):
+        return "This is mock DOCX text."
+
+class TestDocumentValidator(unittest.TestCase):
+    """Tests for DocumentValidator."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.validator = DocumentValidator()
+        
+        # Create temporary test files
+        self.temp_dir = tempfile.mkdtemp()
+        
+        # Create a valid PDF file (empty but valid)
+        self.valid_pdf_path = os.path.join(self.temp_dir, "valid.pdf")
+        with open(self.valid_pdf_path, "wb") as f:
+            f.write(b"%PDF-1.4\n%¥±ë\n\n1 0 obj\n  << /Type /Catalog\n     /Pages 2 0 R\n  >>\nendobj\n\n2 0 obj\n  << /Type /Pages\n     /Kids [3 0 R]\n     /Count 1\n  >>\nendobj\n\n3 0 obj\n  << /Type /Page\n     /Parent 2 0 R\n     /MediaBox [0 0 612 792]\n     /Resources 4 0 R\n     /Contents 5 0 R\n  >>\nendobj\n\n4 0 obj\n  << /ProcSet [/PDF /Text]\n     /Font << /F1 7 0 R >>\n  >>\nendobj\n\n5 0 obj\n  << /Length 73 >>\nstream\n  BT\n    /F1 24 Tf\n    100 100 Td\n    (Test PDF) Tj\n  ET\nendstream\nendobj\n\n7 0 obj\n  << /Type /Font\n     /Subtype /Type1\n     /Name /F1\n     /BaseFont /Helvetica\n  >>\nendobj\n\nxref\n0 8\n0000000000 65535 f \n0000000009 00000 n \n0000000074 00000 n \n0000000142 00000 n \n0000000254 00000 n \n0000000330 00000 n \n0000000456 00000 n \n0000000456 00000 n \n\ntrailer\n  << /Size 8\n     /Root 1 0 R\n  >>\nstartxref\n565\n%%EOF")
+        
+        # Create a valid text file
+        self.valid_text_path = os.path.join(self.temp_dir, "valid.txt")
+        with open(self.valid_text_path, "w") as f:
+            f.write("This is a valid text file.")
+        
+        # Create an empty file
+        self.empty_file_path = os.path.join(self.temp_dir, "empty.txt")
+        with open(self.empty_file_path, "w") as f:
+            pass
+        
+        # Create an unsupported file
+        self.unsupported_file_path = os.path.join(self.temp_dir, "unsupported.xyz")
+        with open(self.unsupported_file_path, "w") as f:
+            f.write("This is an unsupported file format.")
+    
+    def tearDown(self):
+        """Clean up test fixtures."""
+        shutil.rmtree(self.temp_dir)
+    
+    def test_validate_file_path_valid(self):
+        """Test validation of valid file paths."""
+        is_valid, error_message = self.validator.validate_file_path(self.valid_pdf_path)
+        self.assertTrue(is_valid)
+        self.assertIsNone(error_message)
+        
+        is_valid, error_message = self.validator.validate_file_path(self.valid_text_path)
+        self.assertTrue(is_valid)
+        self.assertIsNone(error_message)
+    
+    def test_validate_file_path_nonexistent(self):
+        """Test validation of nonexistent file paths."""
+        is_valid, error_message = self.validator.validate_file_path("nonexistent.pdf")
+        self.assertFalse(is_valid)
+        self.assertIsNotNone(error_message)
+        self.assertIn("not found", error_message)
+    
+    def test_validate_file_path_unsupported(self):
+        """Test validation of unsupported file types."""
+        is_valid, error_message = self.validator.validate_file_path(self.unsupported_file_path)
+        self.assertFalse(is_valid)
+        self.assertIsNotNone(error_message)
+        self.assertIn("Unsupported file type", error_message)
+    
+    def test_validate_file_path_empty(self):
+        """Test validation of empty files."""
+        is_valid, error_message = self.validator.validate_file_path(self.empty_file_path)
+        self.assertTrue(is_valid)  # File exists, validation passes
+        
+        # Content validation should catch empty files
+        is_valid, error_message = self.validator.validate_content("")
+        self.assertFalse(is_valid)
+        self.assertIsNotNone(error_message)
+    
+    def test_validate_content(self):
+        """Test content validation."""
+        # Valid content
+        is_valid, error_message = self.validator.validate_content("This is valid content.")
+        self.assertTrue(is_valid)
+        self.assertIsNone(error_message)
+        
+        # Empty content
+        is_valid, error_message = self.validator.validate_content("")
+        self.assertFalse(is_valid)
+        self.assertIsNotNone(error_message)
+        
+        # Whitespace only content
+        is_valid, error_message = self.validator.validate_content("   \n   ")
+        self.assertFalse(is_valid)
+        self.assertIsNotNone(error_message)
+        
+        # Very short content (should pass with warning)
+        is_valid, error_message = self.validator.validate_content("Short")
+        self.assertTrue(is_valid)
+        self.assertIsNotNone(error_message)  # Warning message
+        self.assertIn("very short", error_message)
+    
+    def test_suggest_fixes(self):
+        """Test suggestion of fixes for validation errors."""
+        suggestion = self.validator.suggest_fixes("Unsupported file type: .xyz")
+        self.assertIn("supported formats", suggestion)
+        
+        suggestion = self.validator.suggest_fixes("File too large")
+        self.assertIn("splitting", suggestion)
+        
+        suggestion = self.validator.suggest_fixes("File is empty")
+        self.assertIn("text content", suggestion)
+        
+        suggestion = self.validator.suggest_fixes("Error reading file")
+        self.assertIn("corrupted", suggestion)
+
+
+class TestDocumentLoader(unittest.TestCase):
+    """Tests for DocumentLoader."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.loader = DocumentLoader()
+        
+        # Create temporary test files
+        self.temp_dir = tempfile.mkdtemp()
+        
+        # Create a valid text file
+        self.valid_text_path = os.path.join(self.temp_dir, "valid.txt")
+        with open(self.valid_text_path, "w") as f:
+            f.write("This is a valid text file.")
+        
+        # PDF and DOCX files will be mocked
+        self.valid_pdf_path = os.path.join(self.temp_dir, "valid.pdf")
+        with open(self.valid_pdf_path, "wb") as f:
+            f.write(b"%PDF-1.4\nMock PDF content")
+        
+        self.valid_docx_path = os.path.join(self.temp_dir, "valid.docx")
+        with open(self.valid_docx_path, "wb") as f:
+            f.write(b"Mock DOCX content")
+    
+    def tearDown(self):
+        """Clean up test fixtures."""
+        shutil.rmtree(self.temp_dir)
+    
+    @patch("core.document_processing.document_loader.PdfReader", MockPdfReader)
+    def test_load_pdf(self):
+        """Test loading PDF documents."""
+        result = self.loader.load_single_document(self.valid_pdf_path)
+        self.assertTrue(result.success)
+        self.assertIsNotNone(result.document)
+        self.assertIn("This is mock PDF text", result.document.page_content)
+    
+    @patch("core.document_processing.document_loader.DocxDocument", MockDocxDocument)
+    def test_load_docx(self):
+        """Test loading DOCX documents."""
+        result = self.loader.load_single_document(self.valid_docx_path)
+        self.assertTrue(result.success)
+        self.assertIsNotNone(result.document)
+        self.assertIn("This is mock DOCX text", result.document.page_content)
+    
+    def test_load_text(self):
+        """Test loading text documents."""
+        result = self.loader.load_single_document(self.valid_text_path)
+        self.assertTrue(result.success)
+        self.assertIsNotNone(result.document)
+        self.assertEqual("This is a valid text file.", result.document.page_content)
+    
+    def test_load_nonexistent(self):
+        """Test loading nonexistent files."""
+        result = self.loader.load_single_document("nonexistent.txt")
+        self.assertFalse(result.success)
+        self.assertIsNone(result.document)
+        self.assertIsNotNone(result.error_message)
+    
+    def test_load_multiple_documents(self):
+        """Test loading multiple documents."""
+        with patch("core.document_processing.document_loader.PdfReader", MockPdfReader), \
+             patch("core.document_processing.document_loader.DocxDocument", MockDocxDocument):
+            
+            results = self.loader.load_documents([
+                self.valid_text_path,
+                self.valid_pdf_path,
+                self.valid_docx_path,
+                "nonexistent.txt"
+            ])
+            
+            self.assertEqual(4, len(results))
+            
+            # Check valid documents
+            self.assertTrue(results[0].success)
+            self.assertTrue(results[1].success)
+            self.assertTrue(results[2].success)
+            
+            # Check invalid document
+            self.assertFalse(results[3].success)
+    
+    def test_loader_result_properties(self):
+        """Test LoaderResult properties."""
+        # Success with warning
+        result = LoaderResult(
+            success=True,
+            document=MagicMock(),
+            warning="Test warning"
+        )
+        self.assertTrue(result.success)
+        self.assertTrue(result.has_warning)
+        
+        # Success without warning
+        result = LoaderResult(
+            success=True,
+            document=MagicMock(),
+            warning=None
+        )
+        self.assertTrue(result.success)
+        self.assertFalse(result.has_warning)
+        
+        # Failure with error
+        result = LoaderResult(
+            success=False,
+            error_message="Test error"
+        )
+        self.assertFalse(result.success)
+        self.assertIsNone(result.document)
+        self.assertEqual("Test error", result.error_message)
+
+
+class TestFileHandler(unittest.TestCase):
+    """Tests for FileHandler."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.file_handler = FileHandler()
+        
+        # Create a temporary directory for testing
+        self.temp_dir = tempfile.mkdtemp()
+        self.file_handler.data_dir = self.temp_dir
+    
+    def tearDown(self):
+        """Clean up test fixtures."""
+        self.file_handler.cleanup()
+        shutil.rmtree(self.temp_dir)
+    
+    def test_process_uploaded_file(self):
+        """Test processing uploaded files."""
+        # Mock uploaded file
+        class MockUploadedFile:
+            def __init__(self, name, content):
+                self.name = name
+                self.content = content
+                self.size = len(content)
+                
+            def read(self):
+                return self.content
+                
+            def getvalue(self):
+                return self.content
+        
+        # Create mock file
+        mock_file = MockUploadedFile(
+            name="test.txt",
+            content=b"This is test content."
+        )
+        
+        # Test with validator patched to always return valid
+        with patch("core.document_processing.document_validator.DocumentValidator.validate_uploaded_file",
+                  return_value=(True, None)):
+            
+            uploaded_file = self.file_handler.process_uploaded_file(mock_file)
+            
+            self.assertIsNotNone(uploaded_file)
+            self.assertEqual("test.txt", uploaded_file.original_name)
+            self.assertEqual(".txt", uploaded_file.file_type)
+            self.assertEqual(mock_file.size, uploaded_file.size)
+            
+            # Check that temp file exists and contains content
+            self.assertTrue(os.path.exists(uploaded_file.temp_path))
+            with open(uploaded_file.temp_path, "rb") as f:
+                content = f.read()
+                self.assertEqual(b"This is test content.", content)
+    
+    def test_process_uploaded_file_validation_error(self):
+        """Test handling validation errors."""
+        # Mock uploaded file
+        mock_file = MagicMock()
+        mock_file.name = "test.xyz"  # Unsupported extension
+        
+        # Patch validator to return error
+        with patch("core.document_processing.document_validator.DocumentValidator.validate_uploaded_file",
+                  return_value=(False, "Unsupported file type")):
+            
+            # Should raise FileHandlerError
+            with self.assertRaises(FileHandlerError):
+                self.file_handler.process_uploaded_file(mock_file)
+    
+    def test_save_file_to_data_dir(self):
+        """Test saving files to data directory."""
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+            tmp_file.write(b"Test content")
+            temp_path = tmp_file.name
+        
+        try:
+            # Save to data directory
+            dest_path = self.file_handler.save_file_to_data_dir(temp_path, "saved_file.txt")
+            
+            # Check that file was saved
+            self.assertTrue(os.path.exists(dest_path))
+            self.assertTrue(os.path.basename(dest_path).endswith(".txt"))
+            
+            # Check content
+            with open(dest_path, "rb") as f:
+                content = f.read()
+                self.assertEqual(b"Test content", content)
+                
+        finally:
+            # Clean up
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+    
+    def test_temporary_directory_context_manager(self):
+        """Test temporary directory context manager."""
+        with self.file_handler.temporary_directory() as temp_dir:
+            # Directory should exist
+            self.assertTrue(os.path.exists(temp_dir))
+            self.assertTrue(os.path.isdir(temp_dir))
+            
+            # Create a file in the directory
+            test_file = os.path.join(temp_dir, "test.txt")
+            with open(test_file, "w") as f:
+                f.write("Test")
+                
+            # File should exist
+            self.assertTrue(os.path.exists(test_file))
+            
+        # After context, directory should be removed
+        self.assertFalse(os.path.exists(temp_dir))
+    
+    def test_temporary_file_context_manager(self):
+        """Test temporary file context manager."""
+        with self.file_handler.temporary_file(suffix=".txt") as temp_file:
+            # File should exist
+            self.assertTrue(os.path.exists(temp_file))
+            
+            # Write to file
+            with open(temp_file, "w") as f:
+                f.write("Test")
+                
+            # Should be readable
+            with open(temp_file, "r") as f:
+                content = f.read()
+                self.assertEqual("Test", content)
+                
+        # After context, file should be removed
+        self.assertFalse(os.path.exists(temp_file))
+
+
+if __name__ == "__main__":
+    unittest.main()

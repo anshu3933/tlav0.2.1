@@ -1,0 +1,32 @@
+# OpenAI API Configuration
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Application Environment
+APP_ENV=development  # development, production, testing
+DEBUG=true
+
+# LLM Configuration
+LLM_MODEL=gpt-4o
+LLM_TEMPERATURE=0.7
+LLM_MAX_TOKENS=2000
+LLM_TIMEOUT=60
+LLM_MAX_RETRIES=3
+LLM_RATE_LIMIT=50
+LLM_CACHE_ENABLED=true
+LLM_CACHE_TTL=3600
+
+# Vector Store Configuration
+VECTOR_INDEX_DIR=models/faiss_index
+EMBEDDING_MODEL=text-embedding-ada-002
+CHUNK_SIZE=1000
+CHUNK_OVERLAP=200
+SIMILARITY_TOP_K=4
+CACHE_EMBEDDINGS=true
+
+# Document Processing
+DATA_DIR=data
+MAX_FILE_SIZE_MB=10
+EXTRACTION_TIMEOUT=30
+
+# Logging
+LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
